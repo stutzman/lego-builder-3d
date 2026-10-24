@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   BrickEngine,
+  PART_NAMES,
   LEGO_COLORS,
   COLOR_MAP,
   PLATE_HEIGHT,
@@ -9,7 +10,7 @@ import {
   BASEPLATE_SIZE
 } from './brickEngine.js';
 import { SoundEngine } from './soundEngine.js';
-import { generateLegoModel } from './generator.js';
+import { generateLegoModel, SAVED_BUILDS, createSavedBuild } from './generator.js';
 import { PhysicsEngine } from './physicsEngine.js';
 
 const RANDOM_PROMPTS = [
@@ -56,9 +57,15 @@ class BrickForgeApp {
     this.pointerDownPos = new THREE.Vector2();
 
     // AI Config
+    const savedKey = (localStorage.getItem('brickforge_apikey') || '').trim();
+    let savedProvider = localStorage.getItem('brickforge_provider') || 'procedural';
+    if (savedKey && savedProvider === 'procedural') {
+      savedProvider = savedKey.startsWith('sk-') ? 'openai' : 'gemini';
+      localStorage.setItem('brickforge_provider', savedProvider);
+    }
     this.aiConfig = {
-      provider: localStorage.getItem('brickforge_provider') || 'procedural',
-      apiKey: localStorage.getItem('brickforge_apikey') || ''
+      provider: savedProvider,
+      apiKey: savedKey
     };
 
     this.initThree();
@@ -68,7 +75,7 @@ class BrickForgeApp {
     this.updateEngineBadge();
 
     // Start initial build
-    this.triggerBuildFromPrompt(document.getElementById('prompt-input').value);
+    this.loadSavedBuild(localStorage.getItem('brickforge_saved_build') || 'technic-excavator');
 
     // Main loop
     this.lastFrameTime = performance.now();
@@ -145,9 +152,9 @@ class BrickForgeApp {
     }
     const w = this.isRotated ? this.selectedSize.d : this.selectedSize.w;
     const d = this.isRotated ? this.selectedSize.w : this.selectedSize.d;
-    const hPlates = this.selectedSize.isPlate ? 1 : BRICK_PLATES;
+    const hPlates = this.selectedSize.hPlates || (this.selectedSize.isPlate ? 1 : BRICK_PLATES);
 
-    const geo = this.brickEngine.getBrickGeometry(w, d, hPlates);
+    const geo = this.brickEngine.getPartGeometry(w, d, hPlates, this.selectedSize.part);
     const colDef = COLOR_MAP[this.selectedColor] || LEGO_COLORS[0];
     this.brickEngine.ghostMaterial.color.set(colDef.hex);
 
@@ -195,8 +202,34 @@ class BrickForgeApp {
       this.triggerBuildFromPrompt(pick);
     });
 
+    // Curated saved builds load directly, independently of the current AI settings.
+    const collection = document.getElementById('build-collection');
+    const savedList = document.getElementById('saved-build-chips');
+    const classicList = document.getElementById('classic-build-chips');
+    const previousBuild = SAVED_BUILDS.find(b => b.id === localStorage.getItem('brickforge_saved_build'));
+    if (previousBuild) collection.value = previousBuild.category;
+    const showCollection = () => {
+      const classic = collection.value === 'classic';
+      classicList.classList.toggle('hidden', !classic);
+      savedList.classList.toggle('hidden', classic);
+      savedList.replaceChildren();
+      for (const entry of SAVED_BUILDS.filter(b => b.category === collection.value)) {
+        const button = document.createElement('button');
+        button.className = 'preset-chip';
+        button.textContent = `${entry.icon} ${entry.title.replace('Technic ', '')}`;
+        button.title = `${entry.title} — saved design, no AI request`;
+        button.addEventListener('click', () => {
+          this.loadSavedBuild(entry.id);
+          savedList.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        });
+        savedList.appendChild(button);
+      }
+    };
+    collection.addEventListener('change', showCollection);
+    showCollection();
+
     // Quick Preset Chips
-    document.querySelectorAll('.preset-chip').forEach(chip => {
+    document.querySelectorAll('.preset-chip[data-prompt]').forEach(chip => {
       chip.addEventListener('click', () => {
         const p = chip.getAttribute('data-prompt');
         promptInput.value = p;
@@ -245,7 +278,9 @@ class BrickForgeApp {
         this.selectedSize = {
           w: parseInt(btn.getAttribute('data-w'), 10),
           d: parseInt(btn.getAttribute('data-d'), 10),
-          isPlate: btn.getAttribute('data-plate') === 'true'
+          isPlate: btn.getAttribute('data-plate') === 'true',
+          part: btn.dataset.part || 'brick',
+          hPlates: Number(btn.dataset.height) || undefined
         };
         this.updateGhostBrickGeometry();
         if (this.mode === 'orbit') {
@@ -402,31 +437,61 @@ class BrickForgeApp {
     const providerSelect = document.getElementById('ai-provider-select');
     const apiKeyInput = document.getElementById('api-key-input');
 
+    const syncKeyAndProvider = () => {
+      const key = apiKeyInput.value.trim();
+      let provider = providerSelect.value;
+      if (key && provider === 'procedural') {
+        provider = key.startsWith('sk-') ? 'openai' : 'gemini';
+        providerSelect.value = provider;
+      }
+      this.aiConfig.provider = provider;
+      this.aiConfig.apiKey = key;
+      localStorage.setItem('brickforge_provider', this.aiConfig.provider);
+      localStorage.setItem('brickforge_apikey', this.aiConfig.apiKey);
+      this.updateEngineBadge();
+    };
+
+    apiKeyInput.addEventListener('input', syncKeyAndProvider);
+    providerSelect.addEventListener('change', syncKeyAndProvider);
+
+    apiKeyInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('save-api-btn').click();
+      }
+    });
+
     document.getElementById('api-settings-btn').addEventListener('click', () => {
       providerSelect.value = this.aiConfig.provider;
       apiKeyInput.value = this.aiConfig.apiKey;
       apiModal.classList.remove('hidden');
+      setTimeout(() => apiKeyInput.focus(), 50);
     });
     document.getElementById('close-api-modal-btn').addEventListener('click', () => {
+      syncKeyAndProvider();
       apiModal.classList.add('hidden');
     });
     document.getElementById('save-api-btn').addEventListener('click', () => {
-      this.aiConfig.provider = providerSelect.value;
-      this.aiConfig.apiKey = apiKeyInput.value.trim();
-      localStorage.setItem('brickforge_provider', this.aiConfig.provider);
-      localStorage.setItem('brickforge_apikey', this.aiConfig.apiKey);
-      this.updateEngineBadge();
+      syncKeyAndProvider();
       apiModal.classList.add('hidden');
-      this.showToast('AI Generation Settings Saved!');
+      if (this.aiConfig.apiKey) {
+        this.showToast(`✅ ${this.aiConfig.provider.toUpperCase()} API Key Active! Designing current prompt...`);
+        const currentPrompt = document.getElementById('prompt-input').value.trim();
+        if (currentPrompt) {
+          this.triggerBuildFromPrompt(currentPrompt);
+        }
+      } else {
+        this.showToast('Switched to Built-in Procedural Architect');
+      }
     });
   }
 
   updateEngineBadge() {
     const label = document.getElementById('engine-mode-label');
     if (this.aiConfig.provider !== 'procedural' && this.aiConfig.apiKey) {
-      label.textContent = `${this.aiConfig.provider.toUpperCase()} Live AI`;
+      label.textContent = `${this.aiConfig.provider.toUpperCase()} Live AI ✓`;
     } else {
-      label.textContent = 'Hybrid Engine';
+      label.textContent = 'Set API Key';
     }
   }
 
@@ -515,21 +580,56 @@ class BrickForgeApp {
     }
   }
 
+  loadSavedBuild(id) {
+    const entry = SAVED_BUILDS.find(b => b.id === id) || SAVED_BUILDS[0];
+    const build = createSavedBuild(entry.id);
+    // Ignore any older AI response after the user chooses a saved design.
+    this.buildRequestId = (this.buildRequestId || 0) + 1;
+    const buildBtn = document.getElementById('build-btn');
+    buildBtn.disabled = false;
+    buildBtn.querySelector('span').textContent = 'Build in 3D';
+    document.getElementById('prompt-input').value = build.title;
+    this.loadModelBlueprint(build.title, build.bricks);
+    localStorage.setItem('brickforge_saved_build', entry.id);
+    this.showToast(`📚 ${build.title} — ${build.bricks.length} saved parts`);
+  }
+
   async triggerBuildFromPrompt(promptText) {
+    const requestId = this.buildRequestId = (this.buildRequestId || 0) + 1;
     const buildBtn = document.getElementById('build-btn');
     buildBtn.disabled = true;
     buildBtn.querySelector('span').textContent = 'Designing...';
 
+    const hasKey = Boolean(this.aiConfig.apiKey && this.aiConfig.apiKey.trim());
+    if (hasKey) {
+      this.showToast(`🤖 Asking ${this.aiConfig.provider.toUpperCase()} AI to design "${promptText}"...`, 8000);
+    }
+
     try {
-      const result = await generateLegoModel(promptText, this.aiConfig);
+      const result = await generateLegoModel(promptText, { ...this.aiConfig,
+        detail: document.getElementById('build-detail').value,
+        technic: document.getElementById('use-technic').checked
+      });
+      if (requestId !== this.buildRequestId) return;
       this.loadModelBlueprint(result.title, result.bricks);
-      this.showToast(`✨ Building "${result.title}" (${result.bricks.length} interlocking bricks)`);
+      if (result.llmError) {
+        this.showToast(`⚠️ AI API Error: ${result.llmError}`, 7000);
+      } else if (!hasKey && !/^(word|text|spell|letters?)\s*:|\b(castle|fortress|citadel|palace|kingdom|keep|car|race\s*car|sports\s*car|vehicle|truck|ferrari|mustang|auto|spaceship|starfighter|rocket|shuttle|ufo|x-wing|spacecraft|jet|plane|robot|mech|gundam|android|bot|cyborg|dino|dinosaur|t-rex|trex|dragon|monster|godzilla|lighthouse|beacon|pyramid|egypt|sphinx|temple|ziggurat|skyscraper|cyberpunk|office|tower|empire\s*state|city|house|cottage|home|cabin|villa|chalet|tree|forest|pine|oak|bonsai|garden)\b/i.test(promptText)) {
+        document.getElementById('api-modal').classList.remove('hidden');
+        setTimeout(() => document.getElementById('api-key-input').focus(), 50);
+        this.showToast(`🔑 No API key saved yet — paste your Gemini/OpenAI key to build "${promptText}"!`, 6000);
+      } else {
+        this.showToast(`✨ Building "${result.title}" via ${result.source} (${result.bricks.length} bricks)`);
+      }
     } catch (err) {
+      if (requestId !== this.buildRequestId) return;
       console.error(err);
       this.showToast('⚠️ Error generating build');
     } finally {
-      buildBtn.disabled = false;
-      buildBtn.querySelector('span').textContent = 'Build in 3D';
+      if (requestId === this.buildRequestId) {
+        buildBtn.disabled = false;
+        buildBtn.querySelector('span').textContent = 'Build in 3D';
+      }
     }
   }
 
@@ -584,7 +684,8 @@ class BrickForgeApp {
     }
     const box = new THREE.Box3();
     for (const m of this.brickMeshes) {
-      box.expandByPoint(m.userData.targetPosition);
+      m.geometry.computeBoundingBox();
+      box.union(m.geometry.boundingBox.clone().translate(m.userData.targetPosition));
     }
     const center = new THREE.Vector3();
     box.getCenter(center);
@@ -592,7 +693,7 @@ class BrickForgeApp {
     box.getSize(size);
     const maxDim = Math.max(12, size.x, size.y, size.z);
 
-    this.controls.target.set(center.x, Math.max(2, center.y * 0.75), center.z);
+    this.controls.target.set(center.x, Math.max(2, center.y), center.z);
     this.camera.position.set(
       center.x + maxDim * 1.15,
       center.y + maxDim * 0.95 + 6,
@@ -635,7 +736,7 @@ class BrickForgeApp {
     if (activeBrick) {
       const bd = activeBrick.userData.brickData;
       const cDef = COLOR_MAP[bd.color] || { name: bd.color, hex: '#ccc' };
-      const typeLabel = bd.hPlates === 1 ? 'Flat Plate' : 'Brick';
+      const typeLabel = PART_NAMES[bd.part] || (bd.hPlates === 1 ? 'Flat Plate' : 'Brick');
       stepInfo.innerHTML = `
         <span class="bom-color-dot" style="background:${cDef.hex};flex-shrink:0;"></span>
         <div>
@@ -654,7 +755,7 @@ class BrickForgeApp {
       const bd = m.userData.brickData;
       const w = Math.min(bd.w, bd.d);
       const d = Math.max(bd.w, bd.d);
-      const kind = bd.hPlates === 1 ? 'Plate' : 'Brick';
+      const kind = PART_NAMES[bd.part] || (bd.hPlates === 1 ? 'Plate' : 'Brick');
       const key = `${bd.color}|${w}×${d} ${kind}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
@@ -698,7 +799,7 @@ class BrickForgeApp {
   computeSnapPlacement(hit) {
     const w = this.isRotated ? this.selectedSize.d : this.selectedSize.w;
     const d = this.isRotated ? this.selectedSize.w : this.selectedSize.d;
-    const hPlates = this.selectedSize.isPlate ? 1 : BRICK_PLATES;
+    const hPlates = this.selectedSize.hPlates || (this.selectedSize.isPlate ? 1 : BRICK_PLATES);
 
     const pt = hit.point.clone().addScaledVector(hit.face.normal, 0.08);
     const halfBase = BASEPLATE_SIZE / 2;
@@ -715,6 +816,7 @@ class BrickForgeApp {
       w,
       d,
       hPlates,
+      part: this.selectedSize.part || 'brick',
       color: this.selectedColor
     };
   }
@@ -811,7 +913,7 @@ class BrickForgeApp {
     this.showToast('💾 Downloaded 3D LEGO Blueprint JSON!');
   }
 
-  showToast(message) {
+  showToast(message, durationMs = 2900) {
     if (!message) return;
     const toast = document.getElementById('hud-toast');
     toast.textContent = message;
@@ -819,7 +921,7 @@ class BrickForgeApp {
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       toast.classList.add('hidden');
-    }, 2900);
+    }, durationMs);
   }
 
   // ==========================================================================

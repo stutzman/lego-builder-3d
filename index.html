@@ -73,7 +73,14 @@
 
   <!-- Quick Preset Chips Bar -->
   <div class="presets-bar">
-    <span class="presets-label">Quick Builds:</span>
+    <label class="presets-label" for="build-collection">Saved Builds</label>
+    <select id="build-collection" aria-label="Build collection" style="flex-shrink:0;background:#131926;color:#e2e8f0;border:1px solid #475569;border-radius:12px;padding:5px;font-size:0.76rem;">
+      <option value="construction">🚧 Construction · Technic</option>
+      <option value="sea">🌊 Sea Animals</option>
+      <option value="classic">🧱 Classic Quick Builds</option>
+    </select>
+    <span id="saved-build-chips" style="display:contents;"></span>
+    <span id="classic-build-chips" class="hidden" style="display:contents;">
     <button class="preset-chip" data-prompt="Medieval castle with four towers and a moat">🏰 Medieval Castle</button>
     <button class="preset-chip" data-prompt="Sleek red race car with spoiler">🏎️ Red Race Car</button>
     <button class="preset-chip" data-prompt="Galactic starfighter spaceship with twin boosters">🚀 Starfighter</button>
@@ -84,6 +91,7 @@
     <button class="preset-chip" data-prompt="Ancient golden Egyptian pyramid with sphinx">🔺 Pyramid</button>
     <button class="preset-chip" data-prompt="Cyberpunk neon skyscraper tower">🌆 Cyberpunk Tower</button>
     <button class="preset-chip" data-prompt="word: BRICK">🔤 3D Text</button>
+    </span>
   </div>
 
   <!-- Left Toolbar: Interaction & Physics Modes -->
@@ -114,6 +122,17 @@
       </div>
     </div>
 
+    <div class="panel-section">
+      <div class="section-title">Build Options</div>
+      <label for="build-detail" style="display:block;margin-bottom:8px;">Detail level</label>
+      <select id="build-detail" style="width:100%;padding:8px;background:#1e293b;color:#f8fafc;border:1px solid #475569;border-radius:8px;">
+        <option value="detailed">Detailed — trim, textures &amp; small parts</option>
+        <option value="standard">Classic — simpler builds</option>
+      </select>
+      <label style="display:flex;gap:8px;margin-top:12px;align-items:center;"><input id="use-technic" type="checkbox" checked> Include Technic parts</label>
+      <p style="font-size:0.72rem;color:#94a3b8;margin:8px 0 0;">Applies to generated builds. Saved designs keep their original detail and Technic parts.</p>
+    </div>
+
     <!-- Brick Palette (Shown when in Add or Paint mode, or always accessible) -->
     <div class="panel-section" id="brick-builder-controls">
       <div class="section-header-row">
@@ -131,6 +150,15 @@
         <button class="size-btn" data-w="2" data-d="2" data-plate="true">2×2 Flat</button>
       </div>
 
+      <div class="section-title" style="margin-top:12px;">Technic Parts</div>
+      <div class="brick-size-grid">
+        <button class="size-btn" data-part="beam" data-w="5" data-d="1" title="5-hole liftarm with open pin holes">Liftarm 5L</button>
+        <button class="size-btn" data-part="beam" data-w="7" data-d="1">Liftarm 7L</button>
+        <button class="size-btn" data-part="axle" data-w="4" data-d="1">Axle 4L</button>
+        <button class="size-btn" data-part="pin" data-w="2" data-d="1">Pin 2L</button>
+        <button class="size-btn" data-part="gear" data-w="3" data-d="1" data-height="8">Gear</button>
+        <button class="size-btn" data-part="wheel" data-w="1" data-d="3" data-height="8">Wheel</button>
+      </div>
       <div class="section-title" style="margin-top: 12px;">LEGO Color Palette</div>
       <div class="color-palette" id="color-palette"></div>
     </div>
@@ -272,7 +300,7 @@
           <label for="ai-provider-select">LLM Provider</label>
           <select id="ai-provider-select">
             <option value="procedural">Built-in Procedural Architect (Instant, No Key Needed)</option>
-            <option value="gemini">Google Gemini API (gemini-2.5-flash)</option>
+            <option value="gemini">Google Gemini API (Auto-selects latest Gemini)</option>
             <option value="openai">OpenAI API (gpt-4o-mini)</option>
           </select>
         </div>
@@ -299,6 +327,7 @@ import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js"
 
 // --- js/soundEngine.js ---
 // WebAudio Procedural Sound Engine for LEGO Brick Snaps, Pops, and Physics Clatter
+
 class SoundEngine {
   constructor() {
     this.ctx = null;
@@ -425,6 +454,7 @@ class SoundEngine {
 }
 
 // --- js/brickEngine.js ---
+
 // Official LEGO Color Palette
 const LEGO_COLORS = [
   { id: 'red', name: 'Bright Red', hex: '#E3000B' },
@@ -446,6 +476,7 @@ const LEGO_COLORS = [
   { id: 'trans_blue', name: 'Trans-Light Blue', hex: '#38BDF8', trans: true },
   { id: 'trans_orange', name: 'Trans-Neon Orange', hex: '#FB923C', trans: true }
 ];
+
 const COLOR_MAP = Object.fromEntries(LEGO_COLORS.map(c => [c.id, c]));
 
 // Dimensions in Three.js world units:
@@ -457,6 +488,12 @@ const BRICK_PLATES = 3; // 3 plates = 1.2 world units
 const STUD_RADIUS = 0.30;
 const STUD_HEIGHT = 0.19;
 const BASEPLATE_SIZE = 48;
+
+const PART_NAMES = {
+  beam: 'Technic Liftarm', axle: 'Technic Cross Axle', pin: 'Technic Pin',
+  gear: 'Technic Gear', wheel: 'Technic Wheel'
+};
+
 class BrickEngine {
   constructor(scene) {
     this.scene = scene;
@@ -645,6 +682,66 @@ class BrickEngine {
     return merged;
   }
 
+  // Extruded outlines retain real through-holes, including in the placement preview.
+  getPartGeometry(w, d, hPlates = 3, part = 'brick') {
+    if (part === 'brick') return this.getBrickGeometry(w, d, hPlates);
+    const key = `${part}:${w}x${d}x${hPlates}`;
+    if (this.geometryCache.has(key)) return this.geometryCache.get(key);
+    const height = hPlates * PLATE_HEIGHT;
+    let shape = new THREE.Shape();
+    let depth;
+    let turn = false;
+    if (part === 'beam') {
+      const length = Math.max(w, d), r = 0.47, half = (length - 1) / 2;
+      shape.moveTo(-half, -r);
+      shape.lineTo(half, -r);
+      shape.absarc(half, 0, r, -Math.PI / 2, Math.PI / 2, false);
+      shape.lineTo(-half, r);
+      shape.absarc(-half, 0, r, Math.PI / 2, 3 * Math.PI / 2, false);
+      for (let i = 0; i < length; i++) {
+        const hole = new THREE.Path();
+        hole.absarc(-half + i, 0, 0.25, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+      }
+      depth = 0.76;
+      turn = d > w;
+    } else if (part === 'gear' || part === 'wheel') {
+      const radius = Math.max(w, d) / 2 - 0.06;
+      const count = part === 'gear' ? 64 : 96;
+      for (let i = 0; i <= count; i++) {
+        const a = i / count * Math.PI * 2;
+        const r = radius - (part === 'gear' && i % 4 < 2 ? 0.22 : 0);
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+      }
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, part === 'wheel' ? radius * 0.42 : 0.23, 0, Math.PI * 2, true);
+      shape.holes.push(hole);
+      depth = Math.min(w, d) - 0.04;
+      turn = w < d;
+    } else {
+      // Cross axles and hollow friction pins run along their long grid dimension.
+      depth = Math.max(w, d) - 0.04;
+      turn = w >= d;
+      if (part === 'axle') {
+        const a = 0.12, b = 0.29;
+        const points = [[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],[a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+        points.forEach(([x,y], i) => i ? shape.lineTo(x,y) : shape.moveTo(x,y));
+        shape.closePath();
+      } else {
+        shape.absarc(0, 0, 0.28, 0, Math.PI * 2, false);
+        const hole = new THREE.Path();
+        hole.absarc(0, 0, 0.14, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+      }
+    }
+    const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 16 });
+    geo.translate(0, height / 2, -depth / 2);
+    if (turn) geo.rotateY(Math.PI / 2);
+    this.geometryCache.set(key, geo);
+    return geo;
+  }
+
   /**
    * Create a Three.js Mesh for a brick specification:
    * { x, y, z, w, d, hPlates, color }
@@ -657,7 +754,7 @@ class BrickEngine {
     const hPlates = brickData.hPlates || 3;
     const color = brickData.color || 'red';
 
-    const geo = this.getBrickGeometry(w, d, hPlates);
+    const geo = this.getPartGeometry(w, d, hPlates, brickData.part);
     const mat = this.getMaterial(color);
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -666,7 +763,7 @@ class BrickEngine {
 
     // Subtle dark edge lines so monochrome structures (e.g. grey castle walls) show every brick
     const key = `${w}x${d}x${hPlates}`;
-    const edgeGeo = this.edgeGeometryCache.get(key);
+    const edgeGeo = !brickData.part || brickData.part === 'brick' ? this.edgeGeometryCache.get(key) : null;
     if (edgeGeo) {
       const edgeMat = new THREE.LineBasicMaterial({
         color: 0x000000,
@@ -704,6 +801,7 @@ class BrickEngine {
 }
 
 // --- js/generator.js ---
+
 /**
  * VoxelGrid accumulates 1x1x1 brick cells (each cell is 1 stud x 1 stud x 1 brick layer = 3 plates)
  * and then runs an alternating-layer greedy brick-merging pass so layers are built out of
@@ -713,6 +811,7 @@ class VoxelGrid {
   constructor() {
     // key: `${x},${layer},${z}` -> { x, layer, z, color, hPlates }
     this.cells = new Map();
+    this.parts = [];
   }
 
   set(x, layer, z, color, hPlates = BRICK_PLATES) {
@@ -928,6 +1027,86 @@ const FONT_5X5 = {
 /**
  * Extract color and scale hints from user prompt text
  */
+function addModelDetails(v, kind, mods, ox = 0, oz = 0) {
+  const part = (type, x, y, z, w, d, color, hPlates = 3) => {
+    v.parts.push({ part: type, x: ox + x, y, z: oz + z, w, d, color, hPlates, layer: Math.floor(y / 3) + 1 });
+  };
+  const plate = (x, y, z, w, d, color) => v.parts.push({ x: ox+x, y, z: oz+z, w, d, color, hPlates: 1, layer: Math.floor(y/3)+1 });
+  if (mods.technic) {
+    if (kind === 'car') {
+      for (const z of [-6, 4]) {
+        part('axle', -6, 2, z+1, 13, 1, 'dark_grey');
+        for (const x of [-6, 5]) {
+          part('wheel', x, 0, z, 1, 3, 'black', 8);
+          part('gear', x, 2, z+1, 1, 1, 'light_grey', 3);
+        }
+      }
+      for (const x of [-4, 4]) part('beam', x, 9, -2, 1, 5, mods.primaryColor || 'red');
+      part('gear', -1, 9, -6, 3, 1, 'light_grey', 8);
+      part('pin', 0, 11, -6, 1, 2, 'blue');
+    } else if (kind === 'robot') {
+      for (const x of [-9, 8]) {
+        part('beam', x, 27, -1, 1, 5, 'dark_grey');
+        part('gear', x, 37, -1, 1, 3, 'light_grey', 8);
+        part('pin', x-0.5, 40, 0, 2, 1, 'blue');
+      }
+    } else if (kind === 'spaceship') {
+      for (const x of [-9, 8]) part('beam', x, 9, -6, 1, 7, 'dark_grey');
+      for (const x of [-3, 3]) part('axle', x, 12, -13, 1, 5, 'light_grey');
+    } else if (kind === 'castle') {
+      part('beam', -2, 13, 10, 5, 1, 'brown');
+      for (const x of [-3, 3]) part('gear', x, 10, 10, 3, 1, 'dark_grey', 8);
+    }
+  }
+  if (!mods.detailed) return;
+  if (kind === 'car') {
+    for (const x of [-5, 5]) {
+      plate(x, 9, 1, 1, 2, 'black'); // wing mirrors
+      for (let z = -5; z <= -3; z++) plate(x < 0 ? -3 : 2, 9, z, 1, 1, 'black');
+    }
+    for (const x of [-2, 0, 2]) plate(x, 6, 9, 1, 1, 'light_grey');
+    for (const z of [-7, -5]) plate(-2, 9, z, 5, 1, 'dark_grey');
+  } else if (kind === 'castle') {
+    const h = mods.isTall ? 9 : 6;
+    for (let x = -7; x <= 7; x += 2) {
+      for (const z of [-10, 10]) {
+        if (z === 10 && Math.abs(x) < 4) continue;
+        v.fillBox(ox+x, 0, oz+z, ox+x, h-2, oz+z, 'dark_grey');
+        plate(x, (h-1)*3, z, 1, 1, 'light_grey');
+      }
+    }
+    for (let z = 5; z < 9; z++) for (let x = -1; x <= 1; x++) v.set(ox+x, 0, oz+z, (x+z)%2 ? 'tan' : 'light_grey');
+    for (const x of [-4, 4]) { v.set(ox+x, 3, oz+11, 'brown'); v.set(ox+x, 4, oz+11, 'trans_orange'); }
+  } else if (kind === 'house') {
+    for (let step=0; step<=6; step++) for (let x=-8; x<=6; x+=2) {
+      for (const z of [-6+step, 6-step]) plate(x, (9+step)*3, z, 2, 1, (x+step)%3 ? (mods.secondaryColor || 'red') : 'brown');
+    }
+    for (const x of [-6, 3]) { v.fillBox(ox+x, 3, oz+6, ox+x, 5, oz+6, 'white'); }
+    for (const x of [-4, 3]) v.fillBox(ox+x, 1, oz+8, ox+x, 4, oz+8, 'white');
+    plate(-4, 15, 6, 8, 3, 'tan'); // porch canopy
+    for (let x=-6; x<=6; x+=2) { v.set(ox+x,1,oz+10,'white'); v.set(ox+x,2,oz+10,'white'); }
+  } else if (kind === 'spaceship') {
+    for (const x of [-8, 7]) for (let z=-7; z<=-3; z+=2) plate(x,9,z,2,1,'dark_grey');
+    for (const x of [-11, 10]) plate(x,9,-7,1,1,'trans_orange');
+    for (const x of [-2, 2]) plate(x,18,0,1,2,'light_grey');
+  } else if (kind === 'robot') {
+    for (const x of [-4, 3]) for (let y=10; y<=14; y+=2) plate(x,y*3,4,2,1,'dark_grey');
+    for (const x of [-3, 3]) v.set(ox+x,20,oz+3,'light_grey');
+    for (const x of [-7,7]) v.set(ox+x,15,oz+3,'trans_orange');
+  } else {
+    // Fine surface texture, restricted to existing exposed cells: no floating ornaments.
+    const cells = [...v.cells.values()];
+    for (const c of cells) {
+      if (v.get(c.x,c.layer+1,c.z) || (Math.abs(c.x*7+c.z*11+c.layer*3)%13)) continue;
+      plate(c.x-ox,(c.layer+1)*3,c.z-oz,1,1,c.color);
+    }
+  }
+}
+
+function finishModel(v) {
+  return [...v.toInterlockingBricks(), ...v.parts].sort((a,b) => a.y-b.y || a.z-b.z || a.x-b.x);
+}
+
 function parseModifiers(prompt) {
   const p = prompt.toLowerCase();
   const mentionedColors = [];
@@ -1043,6 +1222,7 @@ function buildCastle(v, mods, ox = 0, oz = 0) {
   v.fillBox(ox - 1, keepH + 2, oz - 1, ox + 1, keepH + 3, oz + 1, roofColor);
   v.fillBox(ox, keepH + 4, oz, ox, keepH + 6, oz, 'light_grey');
   v.fillBox(ox + 1, keepH + 5, oz, ox + 3, keepH + 6, oz, 'gold');
+  addModelDetails(v, 'castle', mods, ox, oz);
 }
 
 function buildCar(v, mods, ox = 0, oz = 0) {
@@ -1054,7 +1234,7 @@ function buildCar(v, mods, ox = 0, oz = 0) {
     [-5, -6], [4, -6],
     [-5, 4], [4, 4]
   ];
-  for (const [wx, wz] of wheelPositions) {
+  for (const [wx, wz] of (mods.technic ? [] : wheelPositions)) {
     v.fillBox(ox + wx, 0, oz + wz, ox + wx + 1, 1, oz + wz + 2, 'black');
     // Hubcap
     v.set(ox + wx + (wx < 0 ? 0 : 1), 0, oz + wz + 1, 'light_grey');
@@ -1089,6 +1269,7 @@ function buildCar(v, mods, ox = 0, oz = 0) {
   v.fillBox(ox - 3, 3, oz - 8, ox - 3, 4, oz - 7, 'dark_grey');
   v.fillBox(ox + 3, 3, oz - 8, ox + 3, 4, oz - 7, 'dark_grey');
   v.fillBox(ox - 5, 5, oz - 8, ox + 5, 5, oz - 6, bodyColor);
+  addModelDetails(v, 'car', mods, ox, oz);
 }
 
 function buildSpaceship(v, mods, ox = 0, oz = 0) {
@@ -1138,6 +1319,7 @@ function buildSpaceship(v, mods, ox = 0, oz = 0) {
   v.fillBox(ox + 2, 2, oz - 11, ox + 4, 4, oz - 9, 'dark_grey');
   v.fillBox(ox - 3, 3, oz - 13, ox - 3, 3, oz - 11, 'trans_orange');
   v.fillBox(ox + 3, 3, oz - 13, ox + 3, 3, oz - 11, 'trans_orange');
+  addModelDetails(v, 'spaceship', mods, ox, oz);
 }
 
 function buildRobot(v, mods, ox = 0, oz = 0) {
@@ -1181,6 +1363,7 @@ function buildRobot(v, mods, ox = 0, oz = 0) {
   // Top Antenna
   v.fillBox(ox, 21, oz, ox, 22, oz, 'light_grey');
   v.set(ox, 23, oz, 'red');
+  addModelDetails(v, 'robot', mods, ox, oz);
 }
 
 function buildHouse(v, mods, ox = 0, oz = 0) {
@@ -1228,6 +1411,7 @@ function buildHouse(v, mods, ox = 0, oz = 0) {
 
   // Side Pine Tree in the yard
   buildTree(v, { primaryColor: 'green' }, ox - 9, oz + 7, true);
+  addModelDetails(v, 'house', mods, ox, oz);
 }
 
 function buildTree(v, mods, ox = 0, oz = 0, small = false) {
@@ -1249,6 +1433,7 @@ function buildTree(v, mods, ox = 0, oz = 0, small = false) {
     const r = Math.max(1, (small ? 4 : 6) - Math.floor(i * 0.75));
     v.fillCylinder(ox, trunkH + i, oz, r, 1, i % 2 === 0 ? leafColor : 'lime');
   }
+  addModelDetails(v, 'tree', mods, ox, oz);
 }
 
 function buildDinosaur(v, mods, ox = 0, oz = 0) {
@@ -1288,6 +1473,7 @@ function buildDinosaur(v, mods, ox = 0, oz = 0) {
   // Eyes
   v.set(ox - 3, 15, oz + 4, 'yellow');
   v.set(ox + 3, 15, oz + 4, 'yellow');
+  addModelDetails(v, 'dinosaur', mods, ox, oz);
 }
 
 function buildLighthouse(v, mods, ox = 0, oz = 0) {
@@ -1316,6 +1502,7 @@ function buildLighthouse(v, mods, ox = 0, oz = 0) {
   v.fillCylinder(ox, 23, oz, 3.5, 1, stripe1);
   v.fillCylinder(ox, 24, oz, 2.2, 1, stripe1);
   v.set(ox, 25, oz, 'gold');
+  addModelDetails(v, 'lighthouse', mods, ox, oz);
 }
 
 function buildPyramid(v, mods, ox = 0, oz = 0) {
@@ -1334,6 +1521,7 @@ function buildPyramid(v, mods, ox = 0, oz = 0) {
   v.fillBox(ox - 1, 0, oz + levels - 2, ox + 1, 2, oz + levels + 1, null);
   v.set(ox - 2, 3, oz + levels + 1, 'gold');
   v.set(ox + 2, 3, oz + levels + 1, 'gold');
+  addModelDetails(v, 'pyramid', mods, ox, oz);
 }
 
 function buildSkyscraper(v, mods, ox = 0, oz = 0) {
@@ -1358,6 +1546,7 @@ function buildSkyscraper(v, mods, ox = 0, oz = 0) {
   // Rooftop Crown & Spire
   v.fillBox(ox - 2, 23, oz - 2, ox + 2, 24, oz + 2, frameColor);
   v.fillBox(ox, 25, oz, ox, 28, oz, neonColor);
+  addModelDetails(v, 'skyscraper', mods, ox, oz);
 }
 
 function build3DText(v, rawText, mods) {
@@ -1395,32 +1584,128 @@ function build3DText(v, rawText, mods) {
   }
 }
 
+let cachedGeminiModels = null;
+
+async function getGeminiCandidateModels(apiKey) {
+  if (cachedGeminiModels) return cachedGeminiModels;
+  const fallbackList = [
+    'gemini-flash-latest',
+    'gemini-3.0-flash',
+    'gemini-3-flash-preview',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash'
+  ];
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+    if (!resp.ok) return fallbackList;
+    const data = await resp.json();
+    const available = (data.models || [])
+      .filter(m =>
+        Array.isArray(m.supportedGenerationMethods) &&
+        m.supportedGenerationMethods.includes('generateContent') &&
+        /^models\/gemini-/i.test(m.name) &&
+        !/(tts|image|imagen|embedding|veo|audio|live|computer-use|robotics|aqa|learnlm|thinking)/i.test(m.name)
+      )
+      .map(m => m.name.replace(/^models\//, ''));
+
+    const scoreModel = (id) => {
+      const verMatch = id.match(/gemini-(\d+(?:\.\d+)?)/i);
+      const ver = verMatch && parseFloat(verMatch[1]) < 20 ? parseFloat(verMatch[1]) : 0;
+      const isFlash = /flash/i.test(id) && !/lite|8b/i.test(id) ? 100 : (/flash/i.test(id) ? 50 : 0);
+      const isStable = !/preview|exp/i.test(id) ? 2 : 0;
+      return isFlash + ver * 10 + isStable;
+    };
+
+    available.sort((a, b) => scoreModel(b) - scoreModel(a));
+    if (available.length > 0) {
+      cachedGeminiModels = [...new Set([...available, ...fallbackList])];
+      return cachedGeminiModels;
+    }
+  } catch (_) {
+    // Ignore model list fetch failure and fall back to static list
+  }
+  return fallbackList;
+}
+
+function parseBlueprintText(rawText) {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const stripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    return JSON.parse(stripped);
+  } catch (_) {
+    const match = stripped.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+    throw new Error('Invalid JSON from model');
+  }
+}
+
 /**
  * Call Gemini or OpenAI API to generate a structured 3D primitive blueprint for any open-ended prompt
  */
-async function generateWithLLM(prompt, provider, apiKey) {
+async function generateWithLLM(prompt, provider, apiKey, options = {}) {
   const systemInstruction = `You are a 3D LEGO Master Builder. Given a user prompt, output ONLY valid JSON containing a "title" and an array of 3D primitives ("operations") on an integer grid where X is [-16, 16], Y (layer) is [0, 24] (0 is ground), and Z is [-16, 16].
 Valid colors: "red", "blue", "yellow", "green", "lime", "orange", "white", "light_grey", "dark_grey", "black", "tan", "brown", "azure", "purple", "pink", "gold", "trans_blue", "trans_orange".
 Each operation in "operations" must be one of:
 1. {"op": "box", "x1": int, "y1": int, "z1": int, "x2": int, "y2": int, "z2": int, "color": string, "hollow": boolean}
 2. {"op": "cylinder", "cx": int, "y1": int, "cz": int, "radius": number, "height": int, "color": string, "hollow": boolean}
 3. {"op": "sphere", "cx": int, "cy": int, "cz": int, "radius": number, "color": string}
-Use 12 to 35 operations to construct a detailed, recognizable, colorful 3D LEGO model.`;
+${options.detail === 'standard' ? 'Use 12 to 35 operations.' : 'Use 40 to 70 operations. Include layered panels, window frames, lights, vents, smaller trim, and a coherent supporting structure.'}
+${options.technic !== false ? 'You may also use {"op":"part","part":"beam|axle|pin|gear|wheel","x":int,"y":int,"z":int,"w":int,"d":int,"color":string}. Here y is still in brick layers. Beam: 5x1 or 7x1, axle: 4x1, pin: 2x1, gear: 3x1, wheel: 1x3; swap w/d to rotate. Gears and wheels are vertical, all others horizontal. Place mechanical parts with support and clear space; do not fill their occupied region with boxes.' : 'Use only box, cylinder and sphere operations; do not include Technic parts.'}
+Construct a recognizable, colorful 3D LEGO model.`;
 
   if (provider === 'gemini') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `${systemInstruction}\n\nUser prompt: ${prompt}` }] }],
-        generationConfig: { responseMimeType: 'application/json' }
-      })
-    });
-    if (!resp.ok) throw new Error(`Gemini API HTTP ${resp.status}`);
-    const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    return JSON.parse(text);
+    const candidates = await getGeminiCandidateModels(apiKey);
+    let lastError = null;
+    for (const modelId of candidates.slice(0, 6)) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `${systemInstruction}\n\nUser prompt: ${prompt}` }] }],
+            generationConfig: { responseMimeType: 'application/json' }
+          })
+        });
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}));
+          const msg = errBody.error?.message || `Gemini API (${modelId}) HTTP ${resp.status}`;
+          lastError = new Error(msg);
+          if ((resp.status === 400 && /API_KEY_INVALID|API key not valid/i.test(msg)) || resp.status === 401 || resp.status === 403) {
+            throw lastError;
+          }
+          continue;
+        }
+        const data = await resp.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        let parsed = null;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i]?.thought) continue;
+          if (parts[i]?.text) {
+            try {
+              parsed = parseBlueprintText(parts[i].text);
+              if (parsed) break;
+            } catch (_) {}
+          }
+        }
+        if (!parsed && parts.length > 0) {
+          parsed = parseBlueprintText(parts[parts.length - 1].text || '{}');
+        }
+        if (parsed) {
+          cachedGeminiModels = [modelId, ...candidates.filter(m => m !== modelId)];
+          parsed._modelId = modelId;
+          return parsed;
+        }
+      } catch (err) {
+        lastError = err;
+        if (/API_KEY_INVALID|API key not valid/i.test(err.message)) {
+          throw err;
+        }
+      }
+    }
+    throw lastError || new Error('No compatible Gemini model succeeded');
   } else if (provider === 'openai') {
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -1437,47 +1722,124 @@ Use 12 to 35 operations to construct a detailed, recognizable, colorful 3D LEGO 
         ]
       })
     });
-    if (!resp.ok) throw new Error(`OpenAI API HTTP ${resp.status}`);
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || `OpenAI API HTTP ${resp.status}`);
+    }
     const data = await resp.json();
-    return JSON.parse(data.choices?.[0]?.message?.content || '{}');
+    const rawText = data.choices?.[0]?.message?.content || '{}';
+    return parseBlueprintText(rawText);
   }
   throw new Error('Unsupported provider');
 }
 
+function normalizeBrickColor(col) {
+  if (!col || typeof col !== 'string') return 'red';
+  const c = col.toLowerCase().trim().replace(/[\s-]+/g, '_');
+  const aliases = {
+    gray: 'light_grey',
+    grey: 'light_grey',
+    light_gray: 'light_grey',
+    silver: 'light_grey',
+    dark_gray: 'dark_grey',
+    charcoal: 'dark_grey',
+    cyan: 'azure',
+    teal: 'azure',
+    light_blue: 'azure',
+    sky_blue: 'azure',
+    magenta: 'pink',
+    violet: 'purple',
+    beige: 'tan',
+    sand: 'tan',
+    wood: 'brown',
+    dark_brown: 'brown',
+    clear: 'trans_blue',
+    glass: 'trans_blue',
+    transparent_blue: 'trans_blue',
+    transparent_orange: 'trans_orange'
+  };
+  return aliases[c] || (COLOR_MAP[c] ? c : 'red');
+}
+
 /**
  * Main entry point: takes any natural language prompt and returns
- * { title, bricks: Array<{x, y, z, w, d, hPlates, color, layer}>, source }
+ * { title, bricks: Array<{x, y, z, w, d, hPlates, color, layer}>, source, llmError? }
  */
 async function generateLegoModel(prompt, aiConfig = {}) {
   const cleanPrompt = (prompt || 'Medieval Castle').trim();
   const lower = cleanPrompt.toLowerCase();
-  const mods = parseModifiers(cleanPrompt);
+  const mods = { ...parseModifiers(cleanPrompt), detailed: aiConfig.detail !== 'standard', technic: aiConfig.technic !== false };
   const v = new VoxelGrid();
+  let llmError = null;
+
+  const saved = SAVED_BUILDS.find(entry => entry.title.toLowerCase() === lower || entry.id === lower);
+  if (saved) return createSavedBuild(saved.id);
+  const vehicle = /\b(excavator|bulldozer|dump truck|mobile crane|construction crane)\b/i.exec(cleanPrompt);
+  if (vehicle) return createSavedBuild('technic-' + (vehicle[0].toLowerCase().includes('crane') ? 'crane' : vehicle[0].toLowerCase().replace(' ', '-')));
+  const animal = /\b(shark|whale|octopus|sea turtle|manta ray)\b/i.exec(cleanPrompt);
+  if (animal) return createSavedBuild({shark:'reef-shark',whale:'blue-whale',octopus:'coral-octopus','sea turtle':'sea-turtle','manta ray':'manta-ray'}[animal[0].toLowerCase()]);
 
   // 1. If LLM API key is configured, try live LLM generation first
-  if (aiConfig.provider && aiConfig.provider !== 'procedural' && aiConfig.apiKey) {
+  const effectiveProvider = (aiConfig.apiKey && (!aiConfig.provider || aiConfig.provider === 'procedural'))
+    ? (aiConfig.apiKey.startsWith('sk-') ? 'openai' : 'gemini')
+    : aiConfig.provider;
+
+  if (effectiveProvider && effectiveProvider !== 'procedural' && aiConfig.apiKey) {
     try {
-      const blueprint = await generateWithLLM(cleanPrompt, aiConfig.provider, aiConfig.apiKey);
-      if (blueprint && Array.isArray(blueprint.operations) && blueprint.operations.length > 0) {
-        for (const op of blueprint.operations) {
-          if (op.op === 'box') {
-            v.fillBox(op.x1, op.y1, op.z1, op.x2, op.y2, op.z2, op.color || 'red', !!op.hollow);
-          } else if (op.op === 'cylinder') {
-            v.fillCylinder(op.cx, op.y1, op.cz, op.radius || 3, op.height || 3, op.color || 'red', !!op.hollow);
-          } else if (op.op === 'sphere') {
-            v.fillSphere(op.cx, op.cy, op.cz, op.radius || 3, op.color || 'red');
+      const blueprint = await generateWithLLM(cleanPrompt, effectiveProvider, aiConfig.apiKey, aiConfig);
+      const ops = blueprint?.operations || blueprint?.primitives || blueprint?.steps || blueprint?.bricks || (Array.isArray(blueprint) ? blueprint : []);
+      if (Array.isArray(ops) && ops.length > 0) {
+        for (const op of ops) {
+          const kind = String(op.op || op.type || op.shape || 'box').toLowerCase();
+          const color = normalizeBrickColor(op.color);
+          if (kind === 'part') {
+            const type = String(op.part || '');
+            if (mods.technic && ['beam','axle','pin','gear','wheel'].includes(type)) {
+              const size = type === 'beam' ? [5,1] : type === 'axle' ? [4,1] : type === 'pin' ? [2,1] : type === 'wheel' ? [1,3] : [3,1];
+              if (Number(op.d) > Number(op.w) && type !== 'wheel' || type === 'wheel' && Number(op.w) > Number(op.d)) size.reverse();
+              const x = Number(op.x), y = Number(op.y), z = Number(op.z);
+              if ([x,y,z].every(Number.isFinite) && Math.abs(x) <= 16 && Math.abs(z) <= 16 && y >= 0 && y <= 24) {
+                v.parts.push({part:type, x:Math.round(x), y:Math.round(y)*3, z:Math.round(z), w:size[0], d:size[1], hPlates: ['gear','wheel'].includes(type) ? 8 : 3, color, layer:Math.round(y)+1});
+              }
+            }
+          } else if (kind === 'box' || kind === 'cube' || kind === 'rect') {
+            const x1 = op.x1 ?? op.x ?? 0;
+            const y1 = Math.max(0, op.y1 ?? op.y ?? op.layer ?? 0);
+            const z1 = op.z1 ?? op.z ?? 0;
+            const x2 = op.x2 ?? (x1 + Math.max(0, (op.w ?? op.width ?? 1) - 1));
+            const y2 = Math.max(0, op.y2 ?? (y1 + Math.max(0, (op.h ?? op.height ?? 1) - 1)));
+            const z2 = op.z2 ?? (z1 + Math.max(0, (op.d ?? op.depth ?? 1) - 1));
+            v.fillBox(x1, y1, z1, x2, y2, z2, color, !!op.hollow);
+          } else if (kind === 'cylinder' || kind === 'column' || kind === 'tube') {
+            const cx = op.cx ?? op.x ?? 0;
+            const y1 = Math.max(0, op.y1 ?? op.y ?? op.cy ?? 0);
+            const cz = op.cz ?? op.z ?? 0;
+            const radius = Math.max(1, op.radius ?? op.r ?? 3);
+            const height = Math.max(1, op.height ?? op.h ?? 3);
+            v.fillCylinder(cx, y1, cz, radius, height, color, !!op.hollow);
+          } else if (kind === 'sphere' || kind === 'ball' || kind === 'dome') {
+            const cx = op.cx ?? op.x ?? 0;
+            const radius = Math.max(1, op.radius ?? op.r ?? 3);
+            const cy = Math.max(radius, op.cy ?? op.y ?? op.y1 ?? radius);
+            const cz = op.cz ?? op.z ?? 0;
+            v.fillSphere(cx, cy, cz, radius, color);
           }
         }
-        const bricks = v.toInterlockingBricks();
+        const bricks = finishModel(v);
         if (bricks.length > 0) {
           return {
             title: blueprint.title || cleanPrompt,
             bricks,
-            source: `AI (${aiConfig.provider})`
+            source: `AI (${blueprint._modelId || effectiveProvider})`
           };
+        } else {
+          llmError = 'AI returned 0 valid bricks';
         }
+      } else {
+        llmError = 'AI response did not contain operations';
       }
     } catch (err) {
+      llmError = err.message;
       console.warn('LLM API fallback to built-in Procedural Architect:', err.message);
     }
   }
@@ -1516,15 +1878,188 @@ async function generateLegoModel(prompt, aiConfig = {}) {
     buildCar(v, { primaryColor: mods.secondaryColor || 'blue' }, 11, 2);
   }
 
-  const bricks = v.toInterlockingBricks();
+  const bricks = finishModel(v);
   return {
     title,
     bricks,
-    source: 'Procedural 3D Architect'
+    source: 'Procedural 3D Architect',
+    llmError
   };
 }
 
+// Curated, deterministic blueprints. These never call an AI provider.
+const SAVED_BUILDS = [
+  {id:'technic-excavator', title:'Technic Excavator', category:'construction', icon:'🚧'},
+  {id:'technic-bulldozer', title:'Technic Bulldozer', category:'construction', icon:'🚜'},
+  {id:'technic-dump-truck', title:'Technic Dump Truck', category:'construction', icon:'🚚'},
+  {id:'technic-crane', title:'Technic Mobile Crane', category:'construction', icon:'🏗️'},
+  {id:'reef-shark', title:'Reef Shark', category:'sea', icon:'🦈'},
+  {id:'blue-whale', title:'Blue Whale', category:'sea', icon:'🐋'},
+  {id:'coral-octopus', title:'Coral Octopus', category:'sea', icon:'🐙'},
+  {id:'sea-turtle', title:'Sea Turtle', category:'sea', icon:'🐢'},
+  {id:'manta-ray', title:'Manta Ray', category:'sea', icon:'🌊'}
+];
+
+function createSavedBuild(id) {
+  const entry = SAVED_BUILDS.find(build => build.id === id);
+  if (!entry) throw new Error(`Unknown saved build: ${id}`);
+  const v = new VoxelGrid();
+  const box = (x1,y1,z1,x2,y2,z2,color,hollow=false) => v.fillBox(x1,y1,z1,x2,y2,z2,color,hollow);
+  const part = (type,x,layer,z,w,d,color='light_grey',hPlates=3) => v.parts.push({part:type,x,y:layer*3,z,w,d,color,hPlates,layer:layer+1});
+  const ellipsoid = (cx,cy,cz,rx,ry,rz,color,belly) => {
+    for(let y=Math.floor(cy-ry);y<=Math.ceil(cy+ry);y++)
+      for(let x=Math.floor(cx-rx);x<=Math.ceil(cx+rx);x++)
+        for(let z=Math.floor(cz-rz);z<=Math.ceil(cz+rz);z++)
+          if(((x-cx)/rx)**2+((y-cy)/ry)**2+((z-cz)/rz)**2<=1) v.set(x,y,z,belly && y<cy-ry*0.35 ? belly : color);
+  };
+  const wheelChassis = () => {
+    for(const z of [-6,0,6]) {
+      part('axle',-6,0.67,z,13,1,'dark_grey');
+      for(const x of [-6,5]) {
+        part('wheel',x,0,z-1,1,3,'black',8);
+        part('gear',x,0.67,z,1,1,'light_grey');
+      }
+    }
+    box(-4,2,-8,4,3,8,'dark_grey');
+    for(const x of [-5,5]) part('beam',x,3,-4,1,7,'yellow');
+  };
+  const tracks = () => {
+    for(const x of [-7,5]) {
+      box(x,0,-8,x+1,2,8,'black');
+      for(let z=-8;z<=8;z+=2) {box(x,0,z,x+1,0,z,'dark_grey');box(x,2,z,x+1,2,z,'dark_grey');}
+      for(const z of [-6,0,6]) part('gear',x<0 ? x-0.1 : x+1.1,0,z,1,3,'light_grey',8);
+      part('beam',x,3,-3,1,7,'yellow');
+    }
+    box(-4,2,-6,4,3,6,'dark_grey');
+    part('axle',-7,1,-5,15,1,'dark_grey');
+    part('axle',-7,1,5,15,1,'dark_grey');
+  };
+  const cab = (x,z,base=4) => {
+    box(x,base,z,x+3,base+3,z+4,'yellow',true);
+    box(x,base+1,z+4,x+3,base+2,z+4,'trans_blue');
+    box(x,base+1,z+1,x,base+2,z+3,'trans_blue');
+    box(x+3,base+1,z+1,x+3,base+2,z+3,'trans_blue');
+    box(x,base+4,z,x+3,base+4,z+4,'yellow');
+    for(const px of [x,x+3]) box(px,base,z,px,base+3,z,'yellow');
+    v.set(x+1,base+5,z+2,'trans_orange');
+    box(x+1,base,z+1,x+2,base,z+2,'black');
+  };
+  if(entry.category === 'construction') {
+    if(id==='technic-excavator') {
+      tracks();box(-4,4,-5,4,4,4,'yellow');cab(-4,-4,5);
+      box(0,5,-5,4,6,-1,'yellow');box(3,7,-4,3,8,-4,'black');
+      for(let z=-4;z<=-1;z++) v.set(4,6,z,'dark_grey');
+      // Paired stepped boom rails, exposed pivot gears and a broad open bucket.
+      for(let i=0;i<7;i++) for(const x of [0,2]) box(x,5+i,i,x,7+i,i+1,'yellow');
+      for(let i=0;i<6;i++) for(const x of [0,2]) box(x,11-i,6+i,x,12-i,7+i,'yellow');
+      part('beam',0,9,3,1,5,'yellow');part('beam',2,9,3,1,5,'yellow');
+      part('gear',-1,5,1,1,3,'dark_grey',8);part('gear',3,10,5,1,3,'dark_grey',8);
+      part('pin',-1,6,2,5,1,'blue');part('pin',-1,11,6,5,1,'blue');
+      part('axle',1,7,5,1,6,'light_grey');
+      box(-2,2,11,4,2,15,'dark_grey');box(-2,3,11,4,5,11,'dark_grey');
+      box(-2,3,12,-2,4,15,'dark_grey');box(4,3,12,4,4,15,'dark_grey');
+      for(let x=-2;x<=4;x+=2) v.set(x,2,16,'light_grey');
+    } else if(id==='technic-bulldozer') {
+      tracks();box(-4,4,-5,4,4,5,'yellow');cab(-2,-4,4);
+      box(-3,5,2,3,6,6,'yellow');box(2,7,3,2,8,3,'black');
+      for(const x of [-4,4]) {part('beam',x,3,4,1,7,'yellow');part('pin',x-1,4,8,3,1,'blue');}
+      box(-8,1,10,8,4,10,'light_grey');box(-8,1,11,8,1,12,'dark_grey');
+      for(let x=-8;x<=8;x+=2) v.set(x,0,12,'light_grey');
+      for(let x=-2;x<=2;x+=2) v.set(x,5,6,'black');
+      part('gear',-4,3,6,1,3,'dark_grey',8);
+      // Rear ripper attachment.
+      box(-3,2,-10,3,3,-9,'yellow');for(const x of [-3,0,3]) box(x,0,-11,x,2,-11,'dark_grey');
+    } else if(id==='technic-dump-truck') {
+      wheelChassis();cab(-4,4,4);cab(0,4,4);
+      box(-4,4,-8,4,4,2,'yellow');
+      box(-4,5,-8,-4,7,2,'yellow');box(4,5,-8,4,7,2,'yellow');box(-3,5,-8,3,7,-8,'yellow');box(-3,5,2,3,7,2,'yellow');
+      for(const x of [-5,5]) for(const z of [-7,-4,-1]) box(x,4,z,x,6,z,'orange');
+      for(const [x,z,r] of [[-2,-5,2],[1,-4,2],[0,0,1.5]]) ellipsoid(x,6,z,r,1.5,r,'dark_grey');
+      part('gear',-5,3,-7,1,3,'dark_grey',8);part('axle',0,3,-3,1,5,'light_grey');
+      for(const x of [-4,3]) {v.set(x,4,9,'trans_orange');v.set(x,4,-9,'red');}
+      box(-4,3,9,4,3,9,'light_grey');
+    } else {
+      wheelChassis();cab(-4,4,4);box(0,4,4,4,5,8,'yellow');
+      box(-3,4,-4,3,6,2,'yellow');
+      part('gear',-2,6,-2,3,1,'dark_grey',8);cab(-4,-4,6);
+      box(0,6,-2,2,12,0,'yellow');
+      // Open lattice jib with a supported center mast and hanging hook.
+      box(-4,13,-2,13,13,0,'yellow');box(-4,15,-2,13,15,0,'yellow');
+      for(let x=-4;x<=13;x+=3) box(x,14,-2,x,14,0,'yellow');
+      part('beam',4,16,-1,7,1,'yellow');part('pin',0,12,-3,1,4,'blue');
+      box(12,5,-1,12,12,-1,'black');box(11,4,-1,13,4,-1,'gold');v.set(11,5,-1,'gold');
+      for(const x of [-9,8]) {box(Math.min(x,0),2,-4,Math.max(x,0),2,-4,'dark_grey');box(x,0,-5,x+1,1,-3,'dark_grey');}
+      for(const x of [-4,3]) v.set(x,4,9,'trans_orange');
+    }
+  } else {
+    // Shallow water display, sandy patches and coral establish a shared sea-life collection.
+    for(let x=-15;x<=15;x++) for(let z=-15;z<=15;z++) if(x*x+z*z<235) v.set(x,0,z,'trans_blue',1);
+    for(const [x,z] of [[-10,8],[9,-8]]) {
+      box(x,0,z,x+3,0,z+3,'tan');box(x,1,z,x,3,z,'pink');box(x+2,1,z+1,x+2,2,z+1,'orange');
+      v.set(x+1,2,z,'pink');v.set(x+3,2,z+1,'orange');
+    }
+    if(id==='coral-octopus') {
+      // Eight curved, distinct arms with pale suckers on their upper edges.
+      for(let arm=0;arm<8;arm++) {
+        const a=arm*Math.PI/4;
+        for(let t=3;t<=10;t++) {
+          const bend=a+0.035*(t-3)*(t-3);
+          const x=Math.round(Math.cos(bend)*t),z=Math.round(Math.sin(bend)*t);
+          box(x,1,z,x+1,t>8?2:1,z+1,'orange');
+          if(t%2===0) v.set(x,2,z,'tan',1);
+        }
+      }
+      ellipsoid(0,5,0,4,4,4,'orange');
+      for(const x of [-2,2]) {box(x,5,4,x,6,4,'white');v.set(x,5,5,'black');}
+      v.set(0,3,4,'brown');
+    } else if(id==='sea-turtle') {
+      for(const side of [-1,1]) for(let i=0;i<5;i++) {
+        box(side*(4+i),1,2-i,side*(5+i),1,4-i,'green');
+        box(side*(4+i),1,-4-i/2,side*(5+i),1,-3-i/2,'green');
+      }
+      ellipsoid(0,3,0,5,2.5,6,'green','tan');ellipsoid(0,4,0,4.8,3,5.5,'green');
+      for(let x=-4;x<=4;x++) for(let z=-5;z<=5;z++) {
+        const y=4+Math.floor(3*Math.sqrt(Math.max(0,1-(x/5)**2-(z/6)**2)));
+        if((x*x/25+z*z/36)<0.85 && (x%3===0 || z%3===0)) v.set(x,y,z,'lime');
+      }
+      ellipsoid(0,2,7,2,1.5,3,'green');for(const x of [-2,2]) {v.set(x,3,8,'white');v.set(x,3,9,'black');}
+      box(0,1,-8,0,1,-6,'green');
+    } else if(id==='manta-ray') {
+      ellipsoid(0,3,0,4,1.8,6,'dark_grey','white');
+      for(let x=-12;x<=12;x++) {
+        const reach=Math.abs(x), span=Math.max(0,5-Math.floor(reach/2));
+        box(x,Math.max(1,3-Math.floor(reach/5)),-span,x,Math.max(1,3-Math.floor(reach/5)),span,'dark_grey');
+      }
+      for(let z=-13;z<=-5;z++) v.set(Math.round(Math.sin(z)*0.4),1,z,'black');
+      for(const x of [-2,2]) {v.set(x,4,4,'black');box(x,2,5,x,3,7,'dark_grey');}
+    } else {
+      const whale=id==='blue-whale', col=whale?'blue':'light_grey';
+      ellipsoid(0,5,0,whale?5.5:4,whale?3.8:2.5,9,col,'white');
+      ellipsoid(0,4,-9,2,1.6,3,col);
+      if(whale) {
+        for(const side of [-1,1]) for(let i=1;i<=6;i++) box(side*i,3,-11-Math.floor(i/3),side*i,3,-9-Math.floor(i/3),col);
+        v.set(0,9,2,'black'); // blowhole
+        for(let z=4;z<=8;z++) v.set(0,2,z,'light_grey');
+      } else {
+        // Distinct dorsal fin and tall, crescent-like tail.
+        for(let i=0;i<5;i++) box(0,7+i,-3,0,7+i,1-i,'dark_grey');
+        for(let i=0;i<5;i++) {box(0,5+i,-11-i/2,0,5+i,-10-i/2,col);box(0,3-i/2,-11-i/2,0,3-i/2,-10-i/2,col);}
+        for(const side of [-1,1]) for(let i=1;i<=5;i++) box(side*(3+i),3,-i,side*(3+i),3,2-i,col);
+        for(const side of [-1,1]) for(let z=2;z<=4;z++) v.set(side*4,5,z,'dark_grey');
+      }
+      for(const side of [-1,1]) {
+        const x=side*(whale?5:3);v.set(x,6,5,'white');v.set(x,6,6,'black');
+        if(whale) for(let i=0;i<4;i++) box(side*(4+i),3,1-i,side*(5+i),3,3-i,col);
+      }
+      // Clear display supports keep the swimming pose above the water.
+      for(const z of [-4,4]) box(0,0,z,0,2,z,'trans_blue');
+    }
+  }
+  return {id:entry.id,title:entry.title,bricks:finishModel(v),source:'Saved Build Collection'};
+}
+
 // --- js/physicsEngine.js ---
+
 /**
  * Lightweight 3D Rigid-Body Impulse & Gravity Physics Engine for LEGO Bricks
  */
@@ -1729,6 +2264,7 @@ class PhysicsEngine {
 }
 
 // --- js/app.js ---
+
 const RANDOM_PROMPTS = [
   'Medieval castle with four towers and a moat',
   'Sleek red race car with spoiler',
@@ -1773,9 +2309,15 @@ class BrickForgeApp {
     this.pointerDownPos = new THREE.Vector2();
 
     // AI Config
+    const savedKey = (localStorage.getItem('brickforge_apikey') || '').trim();
+    let savedProvider = localStorage.getItem('brickforge_provider') || 'procedural';
+    if (savedKey && savedProvider === 'procedural') {
+      savedProvider = savedKey.startsWith('sk-') ? 'openai' : 'gemini';
+      localStorage.setItem('brickforge_provider', savedProvider);
+    }
     this.aiConfig = {
-      provider: localStorage.getItem('brickforge_provider') || 'procedural',
-      apiKey: localStorage.getItem('brickforge_apikey') || ''
+      provider: savedProvider,
+      apiKey: savedKey
     };
 
     this.initThree();
@@ -1785,7 +2327,7 @@ class BrickForgeApp {
     this.updateEngineBadge();
 
     // Start initial build
-    this.triggerBuildFromPrompt(document.getElementById('prompt-input').value);
+    this.loadSavedBuild(localStorage.getItem('brickforge_saved_build') || 'technic-excavator');
 
     // Main loop
     this.lastFrameTime = performance.now();
@@ -1862,9 +2404,9 @@ class BrickForgeApp {
     }
     const w = this.isRotated ? this.selectedSize.d : this.selectedSize.w;
     const d = this.isRotated ? this.selectedSize.w : this.selectedSize.d;
-    const hPlates = this.selectedSize.isPlate ? 1 : BRICK_PLATES;
+    const hPlates = this.selectedSize.hPlates || (this.selectedSize.isPlate ? 1 : BRICK_PLATES);
 
-    const geo = this.brickEngine.getBrickGeometry(w, d, hPlates);
+    const geo = this.brickEngine.getPartGeometry(w, d, hPlates, this.selectedSize.part);
     const colDef = COLOR_MAP[this.selectedColor] || LEGO_COLORS[0];
     this.brickEngine.ghostMaterial.color.set(colDef.hex);
 
@@ -1912,8 +2454,34 @@ class BrickForgeApp {
       this.triggerBuildFromPrompt(pick);
     });
 
+    // Curated saved builds load directly, independently of the current AI settings.
+    const collection = document.getElementById('build-collection');
+    const savedList = document.getElementById('saved-build-chips');
+    const classicList = document.getElementById('classic-build-chips');
+    const previousBuild = SAVED_BUILDS.find(b => b.id === localStorage.getItem('brickforge_saved_build'));
+    if (previousBuild) collection.value = previousBuild.category;
+    const showCollection = () => {
+      const classic = collection.value === 'classic';
+      classicList.classList.toggle('hidden', !classic);
+      savedList.classList.toggle('hidden', classic);
+      savedList.replaceChildren();
+      for (const entry of SAVED_BUILDS.filter(b => b.category === collection.value)) {
+        const button = document.createElement('button');
+        button.className = 'preset-chip';
+        button.textContent = `${entry.icon} ${entry.title.replace('Technic ', '')}`;
+        button.title = `${entry.title} — saved design, no AI request`;
+        button.addEventListener('click', () => {
+          this.loadSavedBuild(entry.id);
+          savedList.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        });
+        savedList.appendChild(button);
+      }
+    };
+    collection.addEventListener('change', showCollection);
+    showCollection();
+
     // Quick Preset Chips
-    document.querySelectorAll('.preset-chip').forEach(chip => {
+    document.querySelectorAll('.preset-chip[data-prompt]').forEach(chip => {
       chip.addEventListener('click', () => {
         const p = chip.getAttribute('data-prompt');
         promptInput.value = p;
@@ -1962,7 +2530,9 @@ class BrickForgeApp {
         this.selectedSize = {
           w: parseInt(btn.getAttribute('data-w'), 10),
           d: parseInt(btn.getAttribute('data-d'), 10),
-          isPlate: btn.getAttribute('data-plate') === 'true'
+          isPlate: btn.getAttribute('data-plate') === 'true',
+          part: btn.dataset.part || 'brick',
+          hPlates: Number(btn.dataset.height) || undefined
         };
         this.updateGhostBrickGeometry();
         if (this.mode === 'orbit') {
@@ -2119,31 +2689,61 @@ class BrickForgeApp {
     const providerSelect = document.getElementById('ai-provider-select');
     const apiKeyInput = document.getElementById('api-key-input');
 
+    const syncKeyAndProvider = () => {
+      const key = apiKeyInput.value.trim();
+      let provider = providerSelect.value;
+      if (key && provider === 'procedural') {
+        provider = key.startsWith('sk-') ? 'openai' : 'gemini';
+        providerSelect.value = provider;
+      }
+      this.aiConfig.provider = provider;
+      this.aiConfig.apiKey = key;
+      localStorage.setItem('brickforge_provider', this.aiConfig.provider);
+      localStorage.setItem('brickforge_apikey', this.aiConfig.apiKey);
+      this.updateEngineBadge();
+    };
+
+    apiKeyInput.addEventListener('input', syncKeyAndProvider);
+    providerSelect.addEventListener('change', syncKeyAndProvider);
+
+    apiKeyInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('save-api-btn').click();
+      }
+    });
+
     document.getElementById('api-settings-btn').addEventListener('click', () => {
       providerSelect.value = this.aiConfig.provider;
       apiKeyInput.value = this.aiConfig.apiKey;
       apiModal.classList.remove('hidden');
+      setTimeout(() => apiKeyInput.focus(), 50);
     });
     document.getElementById('close-api-modal-btn').addEventListener('click', () => {
+      syncKeyAndProvider();
       apiModal.classList.add('hidden');
     });
     document.getElementById('save-api-btn').addEventListener('click', () => {
-      this.aiConfig.provider = providerSelect.value;
-      this.aiConfig.apiKey = apiKeyInput.value.trim();
-      localStorage.setItem('brickforge_provider', this.aiConfig.provider);
-      localStorage.setItem('brickforge_apikey', this.aiConfig.apiKey);
-      this.updateEngineBadge();
+      syncKeyAndProvider();
       apiModal.classList.add('hidden');
-      this.showToast('AI Generation Settings Saved!');
+      if (this.aiConfig.apiKey) {
+        this.showToast(`✅ ${this.aiConfig.provider.toUpperCase()} API Key Active! Designing current prompt...`);
+        const currentPrompt = document.getElementById('prompt-input').value.trim();
+        if (currentPrompt) {
+          this.triggerBuildFromPrompt(currentPrompt);
+        }
+      } else {
+        this.showToast('Switched to Built-in Procedural Architect');
+      }
     });
   }
 
   updateEngineBadge() {
     const label = document.getElementById('engine-mode-label');
     if (this.aiConfig.provider !== 'procedural' && this.aiConfig.apiKey) {
-      label.textContent = `${this.aiConfig.provider.toUpperCase()} Live AI`;
+      label.textContent = `${this.aiConfig.provider.toUpperCase()} Live AI ✓`;
     } else {
-      label.textContent = 'Hybrid Engine';
+      label.textContent = 'Set API Key';
     }
   }
 
@@ -2232,21 +2832,56 @@ class BrickForgeApp {
     }
   }
 
+  loadSavedBuild(id) {
+    const entry = SAVED_BUILDS.find(b => b.id === id) || SAVED_BUILDS[0];
+    const build = createSavedBuild(entry.id);
+    // Ignore any older AI response after the user chooses a saved design.
+    this.buildRequestId = (this.buildRequestId || 0) + 1;
+    const buildBtn = document.getElementById('build-btn');
+    buildBtn.disabled = false;
+    buildBtn.querySelector('span').textContent = 'Build in 3D';
+    document.getElementById('prompt-input').value = build.title;
+    this.loadModelBlueprint(build.title, build.bricks);
+    localStorage.setItem('brickforge_saved_build', entry.id);
+    this.showToast(`📚 ${build.title} — ${build.bricks.length} saved parts`);
+  }
+
   async triggerBuildFromPrompt(promptText) {
+    const requestId = this.buildRequestId = (this.buildRequestId || 0) + 1;
     const buildBtn = document.getElementById('build-btn');
     buildBtn.disabled = true;
     buildBtn.querySelector('span').textContent = 'Designing...';
 
+    const hasKey = Boolean(this.aiConfig.apiKey && this.aiConfig.apiKey.trim());
+    if (hasKey) {
+      this.showToast(`🤖 Asking ${this.aiConfig.provider.toUpperCase()} AI to design "${promptText}"...`, 8000);
+    }
+
     try {
-      const result = await generateLegoModel(promptText, this.aiConfig);
+      const result = await generateLegoModel(promptText, { ...this.aiConfig,
+        detail: document.getElementById('build-detail').value,
+        technic: document.getElementById('use-technic').checked
+      });
+      if (requestId !== this.buildRequestId) return;
       this.loadModelBlueprint(result.title, result.bricks);
-      this.showToast(`✨ Building "${result.title}" (${result.bricks.length} interlocking bricks)`);
+      if (result.llmError) {
+        this.showToast(`⚠️ AI API Error: ${result.llmError}`, 7000);
+      } else if (!hasKey && !/^(word|text|spell|letters?)\s*:|\b(castle|fortress|citadel|palace|kingdom|keep|car|race\s*car|sports\s*car|vehicle|truck|ferrari|mustang|auto|spaceship|starfighter|rocket|shuttle|ufo|x-wing|spacecraft|jet|plane|robot|mech|gundam|android|bot|cyborg|dino|dinosaur|t-rex|trex|dragon|monster|godzilla|lighthouse|beacon|pyramid|egypt|sphinx|temple|ziggurat|skyscraper|cyberpunk|office|tower|empire\s*state|city|house|cottage|home|cabin|villa|chalet|tree|forest|pine|oak|bonsai|garden)\b/i.test(promptText)) {
+        document.getElementById('api-modal').classList.remove('hidden');
+        setTimeout(() => document.getElementById('api-key-input').focus(), 50);
+        this.showToast(`🔑 No API key saved yet — paste your Gemini/OpenAI key to build "${promptText}"!`, 6000);
+      } else {
+        this.showToast(`✨ Building "${result.title}" via ${result.source} (${result.bricks.length} bricks)`);
+      }
     } catch (err) {
+      if (requestId !== this.buildRequestId) return;
       console.error(err);
       this.showToast('⚠️ Error generating build');
     } finally {
-      buildBtn.disabled = false;
-      buildBtn.querySelector('span').textContent = 'Build in 3D';
+      if (requestId === this.buildRequestId) {
+        buildBtn.disabled = false;
+        buildBtn.querySelector('span').textContent = 'Build in 3D';
+      }
     }
   }
 
@@ -2301,7 +2936,8 @@ class BrickForgeApp {
     }
     const box = new THREE.Box3();
     for (const m of this.brickMeshes) {
-      box.expandByPoint(m.userData.targetPosition);
+      m.geometry.computeBoundingBox();
+      box.union(m.geometry.boundingBox.clone().translate(m.userData.targetPosition));
     }
     const center = new THREE.Vector3();
     box.getCenter(center);
@@ -2309,7 +2945,7 @@ class BrickForgeApp {
     box.getSize(size);
     const maxDim = Math.max(12, size.x, size.y, size.z);
 
-    this.controls.target.set(center.x, Math.max(2, center.y * 0.75), center.z);
+    this.controls.target.set(center.x, Math.max(2, center.y), center.z);
     this.camera.position.set(
       center.x + maxDim * 1.15,
       center.y + maxDim * 0.95 + 6,
@@ -2352,7 +2988,7 @@ class BrickForgeApp {
     if (activeBrick) {
       const bd = activeBrick.userData.brickData;
       const cDef = COLOR_MAP[bd.color] || { name: bd.color, hex: '#ccc' };
-      const typeLabel = bd.hPlates === 1 ? 'Flat Plate' : 'Brick';
+      const typeLabel = PART_NAMES[bd.part] || (bd.hPlates === 1 ? 'Flat Plate' : 'Brick');
       stepInfo.innerHTML = `
         <span class="bom-color-dot" style="background:${cDef.hex};flex-shrink:0;"></span>
         <div>
@@ -2371,7 +3007,7 @@ class BrickForgeApp {
       const bd = m.userData.brickData;
       const w = Math.min(bd.w, bd.d);
       const d = Math.max(bd.w, bd.d);
-      const kind = bd.hPlates === 1 ? 'Plate' : 'Brick';
+      const kind = PART_NAMES[bd.part] || (bd.hPlates === 1 ? 'Plate' : 'Brick');
       const key = `${bd.color}|${w}×${d} ${kind}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
@@ -2415,7 +3051,7 @@ class BrickForgeApp {
   computeSnapPlacement(hit) {
     const w = this.isRotated ? this.selectedSize.d : this.selectedSize.w;
     const d = this.isRotated ? this.selectedSize.w : this.selectedSize.d;
-    const hPlates = this.selectedSize.isPlate ? 1 : BRICK_PLATES;
+    const hPlates = this.selectedSize.hPlates || (this.selectedSize.isPlate ? 1 : BRICK_PLATES);
 
     const pt = hit.point.clone().addScaledVector(hit.face.normal, 0.08);
     const halfBase = BASEPLATE_SIZE / 2;
@@ -2432,6 +3068,7 @@ class BrickForgeApp {
       w,
       d,
       hPlates,
+      part: this.selectedSize.part || 'brick',
       color: this.selectedColor
     };
   }
@@ -2528,7 +3165,7 @@ class BrickForgeApp {
     this.showToast('💾 Downloaded 3D LEGO Blueprint JSON!');
   }
 
-  showToast(message) {
+  showToast(message, durationMs = 2900) {
     if (!message) return;
     const toast = document.getElementById('hud-toast');
     toast.textContent = message;
@@ -2536,7 +3173,7 @@ class BrickForgeApp {
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       toast.classList.add('hidden');
-    }, 2900);
+    }, durationMs);
   }
 
   // ==========================================================================
@@ -2612,7 +3249,6 @@ class BrickForgeApp {
 window.addEventListener('DOMContentLoaded', () => {
   window.brickForgeApp = new BrickForgeApp();
 });
-
 </script>
 </body>
 </html>

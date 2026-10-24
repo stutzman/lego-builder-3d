@@ -35,6 +35,11 @@ export const STUD_RADIUS = 0.30;
 export const STUD_HEIGHT = 0.19;
 export const BASEPLATE_SIZE = 48;
 
+export const PART_NAMES = {
+  beam: 'Technic Liftarm', axle: 'Technic Cross Axle', pin: 'Technic Pin',
+  gear: 'Technic Gear', wheel: 'Technic Wheel'
+};
+
 export class BrickEngine {
   constructor(scene) {
     this.scene = scene;
@@ -223,6 +228,66 @@ export class BrickEngine {
     return merged;
   }
 
+  // Extruded outlines retain real through-holes, including in the placement preview.
+  getPartGeometry(w, d, hPlates = 3, part = 'brick') {
+    if (part === 'brick') return this.getBrickGeometry(w, d, hPlates);
+    const key = `${part}:${w}x${d}x${hPlates}`;
+    if (this.geometryCache.has(key)) return this.geometryCache.get(key);
+    const height = hPlates * PLATE_HEIGHT;
+    let shape = new THREE.Shape();
+    let depth;
+    let turn = false;
+    if (part === 'beam') {
+      const length = Math.max(w, d), r = 0.47, half = (length - 1) / 2;
+      shape.moveTo(-half, -r);
+      shape.lineTo(half, -r);
+      shape.absarc(half, 0, r, -Math.PI / 2, Math.PI / 2, false);
+      shape.lineTo(-half, r);
+      shape.absarc(-half, 0, r, Math.PI / 2, 3 * Math.PI / 2, false);
+      for (let i = 0; i < length; i++) {
+        const hole = new THREE.Path();
+        hole.absarc(-half + i, 0, 0.25, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+      }
+      depth = 0.76;
+      turn = d > w;
+    } else if (part === 'gear' || part === 'wheel') {
+      const radius = Math.max(w, d) / 2 - 0.06;
+      const count = part === 'gear' ? 64 : 96;
+      for (let i = 0; i <= count; i++) {
+        const a = i / count * Math.PI * 2;
+        const r = radius - (part === 'gear' && i % 4 < 2 ? 0.22 : 0);
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+      }
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, part === 'wheel' ? radius * 0.42 : 0.23, 0, Math.PI * 2, true);
+      shape.holes.push(hole);
+      depth = Math.min(w, d) - 0.04;
+      turn = w < d;
+    } else {
+      // Cross axles and hollow friction pins run along their long grid dimension.
+      depth = Math.max(w, d) - 0.04;
+      turn = w >= d;
+      if (part === 'axle') {
+        const a = 0.12, b = 0.29;
+        const points = [[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],[a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+        points.forEach(([x,y], i) => i ? shape.lineTo(x,y) : shape.moveTo(x,y));
+        shape.closePath();
+      } else {
+        shape.absarc(0, 0, 0.28, 0, Math.PI * 2, false);
+        const hole = new THREE.Path();
+        hole.absarc(0, 0, 0.14, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+      }
+    }
+    const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 16 });
+    geo.translate(0, height / 2, -depth / 2);
+    if (turn) geo.rotateY(Math.PI / 2);
+    this.geometryCache.set(key, geo);
+    return geo;
+  }
+
   /**
    * Create a Three.js Mesh for a brick specification:
    * { x, y, z, w, d, hPlates, color }
@@ -235,7 +300,7 @@ export class BrickEngine {
     const hPlates = brickData.hPlates || 3;
     const color = brickData.color || 'red';
 
-    const geo = this.getBrickGeometry(w, d, hPlates);
+    const geo = this.getPartGeometry(w, d, hPlates, brickData.part);
     const mat = this.getMaterial(color);
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -244,7 +309,7 @@ export class BrickEngine {
 
     // Subtle dark edge lines so monochrome structures (e.g. grey castle walls) show every brick
     const key = `${w}x${d}x${hPlates}`;
-    const edgeGeo = this.edgeGeometryCache.get(key);
+    const edgeGeo = !brickData.part || brickData.part === 'brick' ? this.edgeGeometryCache.get(key) : null;
     if (edgeGeo) {
       const edgeMat = new THREE.LineBasicMaterial({
         color: 0x000000,

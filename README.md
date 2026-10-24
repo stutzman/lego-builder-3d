@@ -24,3 +24,16 @@ An interactive 3D LEGO brick building experience powered by Three.js. Type what 
   - Click **💥 Explode Build (TNT)** or use **☄️ Smash** mode to knock bricks loose with 3D gravity and bounce physics, then click **⏪ Reassemble Bricks** to reverse time.
 - **Instruction Manual & Parts List:**
   - Click **📖 Manual & Parts** for step-by-step layer cards, **X-Ray Layer Isolation**, and a complete Bill of Materials.
+
+
+## Saved Build Collections
+
+Use the **Saved Builds** collection menu above the canvas:
+
+- **Construction · Technic:** excavator, bulldozer, dump truck, and mobile crane. Each includes Technic liftarms, axles, and gears; tracked vehicles also have detailed tread assemblies.
+- **Sea Animals:** reef shark, blue whale, coral octopus, sea turtle, and manta ray, each on a water-and-coral display.
+- **Classic Quick Builds:** the original prompt shortcuts.
+
+Saved designs load directly without an AI request and retain their original parts regardless of the generated-build settings. Your last selected saved design reopens on refresh. They support the timeline, manual, parts list, painting, adding/removing parts, physics, and **Save** blueprint export. Mechanical parts are visual; steering, hydraulics, and gear motion are not simulated.
+
+Individual saved blueprints are in `builds/`, with collection metadata in `builds/catalog.json`. Their deterministic builders and catalog are maintained in `js/generator.js`; both HTML entry points contain the same bundled application.

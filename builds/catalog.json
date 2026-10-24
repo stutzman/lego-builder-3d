@@ -1,0 +1,56 @@
+[
+  {
+    "id": "technic-excavator",
+    "title": "Technic Excavator",
+    "category": "construction",
+    "icon": "🚧"
+  },
+  {
+    "id": "technic-bulldozer",
+    "title": "Technic Bulldozer",
+    "category": "construction",
+    "icon": "🚜"
+  },
+  {
+    "id": "technic-dump-truck",
+    "title": "Technic Dump Truck",
+    "category": "construction",
+    "icon": "🚚"
+  },
+  {
+    "id": "technic-crane",
+    "title": "Technic Mobile Crane",
+    "category": "construction",
+    "icon": "🏗️"
+  },
+  {
+    "id": "reef-shark",
+    "title": "Reef Shark",
+    "category": "sea",
+    "icon": "🦈"
+  },
+  {
+    "id": "blue-whale",
+    "title": "Blue Whale",
+    "category": "sea",
+    "icon": "🐋"
+  },
+  {
+    "id": "coral-octopus",
+    "title": "Coral Octopus",
+    "category": "sea",
+    "icon": "🐙"
+  },
+  {
+    "id": "sea-turtle",
+    "title": "Sea Turtle",
+    "category": "sea",
+    "icon": "🐢"
+  },
+  {
+    "id": "manta-ray",
+    "title": "Manta Ray",
+    "category": "sea",
+    "icon": "🌊"
+  }
+]
